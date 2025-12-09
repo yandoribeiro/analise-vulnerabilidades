@@ -89,7 +89,7 @@ void loop() {
   enviarMQTT();
 }
 ```
-<img src="video.mp4">
+<img src="video.jpg">
 
 ### Mitigação:
 Uma forma de mitigar essa vulnerabilidade é implementar autenticação no broker. Isso inclui configurar um arquivo de password file no Mosquitto e exigir que todos os dispositivos, tanto o servidor quanto as ESP32, utilizem usuário e senha ao se conectar. Dessa forma, apenas dispositivos autorizados conseguem publicar ou receber mensagens, bloqueando imediatamente tentativas de flooding e impedindo que atacantes se passem por outros serviços.
