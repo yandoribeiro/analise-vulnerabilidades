@@ -94,7 +94,7 @@ void loop() {
 ### Mitigação:
 Uma forma de mitigar essa vulnerabilidade é implementar autenticação no broker. Isso inclui configurar um arquivo de password file no Mosquitto e exigir que todos os dispositivos, tanto o servidor quanto as ESP32, utilizem usuário e senha ao se conectar. Dessa forma, apenas dispositivos autorizados conseguem publicar ou receber mensagens, bloqueando imediatamente tentativas de flooding e impedindo que atacantes se passem por outros serviços.
 
-1.1.2. Vunerabilidade 2 - Falta de TLS:
+### 1.1.2. Vunerabilidade 2 - Falta de TLS:
 O broker Mosquitto está configurado para aceitar conexões apenas pela porta 1883, que é a porta padrão sem criptografia. Isso significa que toda comunicação entre o ESP32 e o servidor via MQTT viaja pela rede em texto puro, sem nenhuma proteção.
 
 Essa ausência de TLS (Transport Layer Security) traz dois problemas graves:
