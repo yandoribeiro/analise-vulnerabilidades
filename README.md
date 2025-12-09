@@ -129,3 +129,47 @@ CREATE ROLE atk WITH SUPERUSER LOGIN PASSWORD '1234';
 ### Ações de longo prazo
 - Reintegrar um captive portal seguro para configuração de rede.
 - Implementar autenticação mútua (mTLS) entre ESP32 e o broker MQTT.
+
+# 3 Análise do hardware
+
+Durante a análise do sistema de alimentação do dispositivo, foram identificadas as seguintes vulnerabilidades principais:
+
+## 3.1 Vulnerabilidade 1 - Alimentação de emergência por pilhas removíveis
+
+O sistema utiliza pilhas como fonte de energia reserva, armazenadas em um compartimento facilmente acessível. Isso significa que qualquer pessoa com acesso físico ao dispositivo pode remover ou substituir essas pilhas sem que o sistema gere alertas ou registre a manipulação. Como a alimentação emergencial depende exclusivamente dessas pilhas, a remoção ou sabotagem delas pode comprometer completamente o funcionamento do dispositivo durante quedas de energia. Assim, são possíveis alguns casos de ataque, entre eles:
+
+### 3.1.1 Remoção física das pilhas
+
+Este ataque ocorre quando o indivíduo abre o compartimento e retira todas as pilhas. Após a remoção, o sistema continua funcionando normalmente enquanto a energia principal estiver disponível, o que mascara a sabotagem. Entretanto, no momento em que houver uma queda de energia, o dispositivo ficará totalmente desligado, comprometendo sua disponibilidade e afetando mecanismos dependentes dele.
+
+A probabilidade desse ataque é alta, pois exige apenas acesso físico e nenhum conhecimento técnico. O impacto é crítico, já que o sistema falha justamente quando a energia de reserva seria necessária. O risco resultante é, portanto, alto, combinando alta probabilidade e impacto elevado.
+
+### 3.1.2 Substituição por pilhas descarregadas ou defeituosas
+
+Nesse ataque, o invasor abre o compartimento e substitui as pilhas corretas por unidades descarregadas, defeituosas ou com polaridade invertida. O dispositivo permanece funcionando normalmente enquanto estiver conectado à energia principal, ocultando a sabotagem. No momento em que ocorrer uma interrupção da energia externa, o sistema não terá autonomia e desligará instantaneamente.
+
+A probabilidade desse ataque é média-alta, pois exige que o atacante tenha pilhas inadequadas consigo, algo simples de obter. O impacto é alto, pois o sistema falha em um momento crítico e sem qualquer indicação prévia de problema. O risco final também é considerado alto, uma vez que combina impacto significativo com probabilidade relevante.
+
+### 3.1.3 Mitigação
+
+A mitigação mais adequada consiste em substituir o uso de pilhas removíveis por uma bateria recarregável interna, integrada ao case e conectada diretamente ao sistema de alimentação principal. A bateria deve ser fixada de forma a impedir remoção manual, eliminando a possibilidade de manipulação sem desmontagem completa do case. Além disso, por ser recarregável, dispensa troca manual e reduz drasticamente o risco relacionado à sabotagem física do backup de energia.
+
+## 3.2 Vulnerabilidade 2 - Exposição dos fios entre os cases devido à instalação externa da tubulação
+
+O sistema conta com dois cases interligados por fios que dependem de uma tubulação externa instalada no momento da implementação. Como essa tubulação não faz parte da estrutura original dos cases e depende da qualidade da instalação, ela pode apresentar fragilidades físicas, como baixa resistência a impacto ou fácil acesso quando colocada em áreas expostas. Com isso, um atacante pode quebrar a tubulação, removê-la ou cortá-la, obtendo acesso direto aos fios de comunicação e alimentação que conectam os módulos ESP utilizados no sistema aos componentes do case. A interrupção desses fios afeta diretamente o funcionamento integrado do dispositivo, podendo resultar em falhas totais ou parciais. Assim, são possíveis alguns casos de ataque, entre eles:
+
+### 3.2.1 Corte dos fios após ruptura da tubulação instalada
+
+Nesse ataque, o invasor identifica a tubulação externa que contém os fios, rompe sua estrutura e, com isso, expõe a fiação. A partir desse ponto, o atacante corta completamente os fios responsáveis pela interligação dos cases. Como esses fios são responsáveis pela comunicação dos componentes com as ESPs, o corte resulta na perda imediata da comunicação entre os módulos.
+
+A probabilidade desse ataque é média, pois depende de ferramentas simples para romper a tubulação, mas não exige conhecimento técnico. O impacto é alto, já que o corte interrompe diretamente o funcionamento do sistema, podendo causar desligamento, falha de comunicação ou indisponibilidade completa. O risco final é alto, resultante da combinação entre impacto elevado e probabilidade significativa devido à instalação exposta.
+
+### 3.2.2 Manipulação dos fios expostos após abertura da tubulação
+
+No segundo ataque, o invasor não apenas rompe a tubulação, mas manipula os fios expostos sem necessariamente cortá-los. Isso inclui descascar parcialmente a fiação, inverter conexões, provocar curto-circuito ou interferir no sinal utilizado entre os cases. Como a tubulação é instalada externamente e pode variar conforme o ambiente, sua remoção parcial pode ser feita discretamente, permitindo manipulações que causam falhas intermitentes, mau funcionamento, reinicializações inesperadas ou até danos físicos aos módulos ESP.
+
+A probabilidade desse ataque é média-baixa, pois exige um pouco mais de intenção, tempo e conhecimento básico sobre fios e conexões. No entanto, o impacto permanece alto, já que a manipulação pode danificar os componentes, interromper o funcionamento ou gerar comportamentos imprevisíveis no sistema. O risco final é classificado como médio-alto, pois, embora a probabilidade seja moderada, o impacto operacional é severo.
+
+### 3.2.3 Mitigação
+
+A mitigação deve envolver o reforço físico da tubulação externa instalada no case. Isso pode incluir o uso de eletrodutos metálicos rígidos ou tubulação reforçada resistente a impacto, além de fixação interna dos fios com presilhas internas que minimizem o movimento mesmo se a tubulação externa for danificada. Outra camada de proteção consiste em instalar um sensor de ruptura ou desconexão, que detecta alteração no estado dos fios ou abertura da tubulação, permitindo que o sistema registre ou sinalize tentativas de sabotagem.
